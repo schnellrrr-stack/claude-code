@@ -25,6 +25,7 @@ class ApolloConnector:
 
     def search_people(
         self,
+        criteria: Optional[Dict[str, Any]] = None,
         person_titles: Optional[List[str]] = None,
         company_sizes: Optional[List[str]] = None,
         industries: Optional[List[str]] = None,
@@ -35,9 +36,10 @@ class ApolloConnector:
         Search for people using Apollo.io API.
 
         Args:
-            person_titles: List of job titles to search for
-            company_sizes: List of company size ranges
-            industries: List of industries
+            criteria: Dict with search criteria (new interface)
+            person_titles: List of job titles to search for (legacy)
+            company_sizes: List of company size ranges (legacy)
+            industries: List of industries (legacy)
             page: Page number for pagination
             per_page: Number of results per page (max 100)
 
@@ -46,21 +48,37 @@ class ApolloConnector:
         """
         endpoint = f"{self.BASE_URL}/mixed_people/search"
 
-        # Use defaults from config if not provided
-        if person_titles is None:
-            person_titles = settings.get_person_titles_list()
-        if company_sizes is None:
-            company_sizes = settings.get_company_sizes_list()
-        if industries is None:
-            industries = settings.get_industries_list()
+        # Handle new criteria-based interface
+        if criteria is not None:
+            person_titles = criteria.get("job_titles", [])
+            company_sizes = criteria.get("company_size", [])
+            industries = criteria.get("industries", [])
+            seniority_levels = criteria.get("seniority_levels", [])
+            locations = criteria.get("locations", [])
+        else:
+            # Use defaults from config if not provided (legacy interface)
+            if person_titles is None:
+                person_titles = settings.get_person_titles_list()
+            if company_sizes is None:
+                company_sizes = settings.get_company_sizes_list()
+            if industries is None:
+                industries = settings.get_industries_list()
+            seniority_levels = []
+            locations = []
 
         payload = {
             "person_titles": person_titles,
             "organization_num_employees_ranges": company_sizes,
-            "organization_industry_tag_ids": industries,
+            "q_organization_keyword_tags": industries,
             "page": page,
             "per_page": min(per_page, 100)  # API max is 100
         }
+
+        # Add optional fields if provided
+        if seniority_levels:
+            payload["person_seniorities"] = seniority_levels
+        if locations:
+            payload["person_locations"] = locations
 
         try:
             response = requests.post(
@@ -181,3 +199,41 @@ class ApolloConnector:
                 "message": f"API request failed: {str(e)}",
                 "status_code": getattr(e.response, "status_code", None)
             }
+
+    def format_leads(self, raw_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Format raw Apollo API results into a clean lead list.
+
+        Args:
+            raw_results: Raw API response from Apollo
+
+        Returns:
+            List of formatted lead dictionaries
+        """
+        if not raw_results or raw_results.get("error"):
+            return []
+
+        people = raw_results.get("people", [])
+        formatted_leads = []
+
+        for person in people:
+            organization = person.get("organization", {}) or {}
+
+            lead = {
+                "first_name": person.get("first_name", ""),
+                "last_name": person.get("last_name", ""),
+                "name": person.get("name", ""),
+                "title": person.get("title", ""),
+                "email": person.get("email", ""),
+                "linkedin_url": person.get("linkedin_url", ""),
+                "phone": person.get("phone_numbers", [{}])[0].get("raw_number", "") if person.get("phone_numbers") else "",
+                "company_name": organization.get("name", ""),
+                "company_website": organization.get("website_url", ""),
+                "company_industry": organization.get("industry", ""),
+                "company_size": organization.get("estimated_num_employees", ""),
+                "company_location": organization.get("city", ""),
+            }
+
+            formatted_leads.append(lead)
+
+        return formatted_leads

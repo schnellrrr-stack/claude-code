@@ -1,188 +1,138 @@
-"""Main lead generation system."""
+# main.py
 import json
 import sys
-from typing import Optional, List
+from datetime import datetime
 from apollo_connector import ApolloConnector
-from config import settings
-
+from anthropic import Anthropic
+from config import ANTHROPIC_API_KEY
 
 class LeadGenerator:
-    """Lead generation system using Apollo.io."""
-
     def __init__(self):
-        """Initialize lead generator."""
         self.apollo = ApolloConnector()
+        self.claude = Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    def generate_leads(
-        self,
-        person_titles: Optional[List[str]] = None,
-        company_sizes: Optional[List[str]] = None,
-        industries: Optional[List[str]] = None,
-        max_results: Optional[int] = None
-    ) -> List[dict]:
+    def parse_icp_with_claude(self, icp_description):
         """
-        Generate leads based on search criteria.
-
-        Args:
-            person_titles: List of job titles to search for
-            company_sizes: List of company size ranges
-            industries: List of industries
-            max_results: Maximum number of results to retrieve
-
-        Returns:
-            List of lead dictionaries
+        Use Claude to parse natural language ICP into structured criteria
         """
-        max_results = max_results or settings.max_results
-        per_page = min(max_results, 100)
-        all_leads = []
+        print("🤖 Parsing ICP with Claude...")
 
-        print(f"Searching for leads with criteria:")
-        print(f"  Titles: {person_titles or settings.get_person_titles_list()}")
-        print(f"  Company Sizes: {company_sizes or settings.get_company_sizes_list()}")
-        print(f"  Industries: {industries or settings.get_industries_list()}")
-        print(f"  Max Results: {max_results}\n")
+        prompt = f"""Parse this ICP (Ideal Customer Profile) description into structured search criteria for Apollo.io API.
 
-        page = 1
-        while len(all_leads) < max_results:
-            print(f"Fetching page {page}...")
+ICP Description: {icp_description}
 
-            result = self.apollo.search_people(
-                person_titles=person_titles,
-                company_sizes=company_sizes,
-                industries=industries,
-                page=page,
-                per_page=per_page
-            )
+Return ONLY valid JSON with these fields (use empty arrays if not specified):
+{{
+    "job_titles": ["exact job titles like 'CTO', 'VP Engineering'"],
+    "seniority_levels": ["C-Suite", "VP", "Director", "Manager"],
+    "company_size": ["1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5001+"],
+    "industries": ["industry keywords"],
+    "locations": ["city, state or country names"]
+}}
 
-            if result.get("error"):
-                print(f"Error: {result.get('message')}")
-                break
+Be specific with job titles and use standard Apollo.io format."""
 
-            people = result.get("people", [])
-            if not people:
-                print("No more results found.")
-                break
+        message = self.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": prompt
+            }]
+        )
 
-            # Extract relevant lead information
-            for person in people:
-                lead = self._extract_lead_info(person)
-                all_leads.append(lead)
+        # Extract JSON from Claude's response
+        response_text = message.content[0].text
 
-                if len(all_leads) >= max_results:
-                    break
+        # Find JSON in response (handle markdown code blocks)
+        if "```json" in response_text:
+            json_str = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            json_str = response_text.split("```")[1].split("```")[0].strip()
+        else:
+            json_str = response_text.strip()
 
-            print(f"Retrieved {len(people)} leads (Total: {len(all_leads)})")
+        try:
+            criteria = json.loads(json_str)
+            print(f"✅ Parsed criteria: {json.dumps(criteria, indent=2)}")
+            return criteria
+        except json.JSONDecodeError as e:
+            print(f"❌ Error parsing Claude's response: {e}")
+            print(f"Response was: {response_text}")
+            return None
 
-            # Check if there are more pages
-            pagination = result.get("pagination", {})
-            if page >= pagination.get("total_pages", 1):
-                break
-
-            page += 1
-
-        print(f"\nTotal leads generated: {len(all_leads)}")
-        return all_leads
-
-    def _extract_lead_info(self, person: dict) -> dict:
+    def generate_leads(self, icp_description):
         """
-        Extract relevant information from Apollo person object.
-
-        Args:
-            person: Person data from Apollo API
-
-        Returns:
-            Simplified lead dictionary
+        Main function to generate leads from ICP description
         """
-        organization = person.get("organization", {}) or {}
+        print("\n" + "="*60)
+        print("🚀 LEAD GENERATION STARTED")
+        print("="*60 + "\n")
 
-        return {
-            "name": person.get("name"),
-            "title": person.get("title"),
-            "email": person.get("email"),
-            "linkedin_url": person.get("linkedin_url"),
-            "phone": person.get("phone_numbers", [{}])[0].get("raw_number") if person.get("phone_numbers") else None,
-            "company": {
-                "name": organization.get("name"),
-                "website": organization.get("website_url"),
-                "industry": organization.get("industry"),
-                "size": organization.get("estimated_num_employees"),
-                "location": organization.get("city"),
-            }
+        # Step 1: Parse ICP
+        criteria = self.parse_icp_with_claude(icp_description)
+        if not criteria:
+            print("❌ Failed to parse ICP. Exiting.")
+            return
+
+        # Step 2: Search Apollo
+        print("\n📊 Searching Apollo.io for leads...")
+        raw_results = self.apollo.search_people(criteria)
+
+        if not raw_results:
+            print("❌ No results from Apollo. Check your API key and criteria.")
+            return
+
+        # Step 3: Format results
+        leads = self.apollo.format_leads(raw_results)
+        print(f"✅ Found {len(leads)} leads")
+
+        # Step 4: Save results
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f"output/leads_{timestamp}.json"
+
+        output_data = {
+            "generated_at": datetime.now().isoformat(),
+            "icp_description": icp_description,
+            "criteria_used": criteria,
+            "total_leads": len(leads),
+            "leads": leads
         }
 
-    def export_leads(self, leads: List[dict], filename: str = "leads.json"):
-        """
-        Export leads to a file.
+        with open(output_file, "w") as f:
+            json.dump(output_data, f, indent=2)
 
-        Args:
-            leads: List of lead dictionaries
-            filename: Output filename
-        """
-        with open(filename, "w") as f:
-            json.dump(leads, f, indent=2)
-        print(f"Leads exported to {filename}")
+        print(f"\n💾 Results saved to: {output_file}")
 
-    def check_api_health(self):
-        """Check Apollo API health and credits."""
-        print("Checking API health...")
-        result = self.apollo.get_credits()
+        # Display preview
+        print("\n" + "="*60)
+        print("📋 LEAD PREVIEW (First 3)")
+        print("="*60)
+        for i, lead in enumerate(leads[:3], 1):
+            print(f"\n{i}. {lead['first_name']} {lead['last_name']}")
+            print(f"   Title: {lead['title']}")
+            print(f"   Company: {lead['company_name']}")
+            print(f"   Email: {lead['email']}")
+            print(f"   LinkedIn: {lead['linkedin_url']}")
 
-        if result.get("error"):
-            print(f"Error: {result.get('message')}")
-            return False
+        print("\n" + "="*60)
+        print("✅ LEAD GENERATION COMPLETED")
+        print("="*60 + "\n")
 
-        print("API Status: OK")
-        print(f"Credits remaining: {result.get('credits_remaining', 'Unknown')}")
-        return True
-
+        return leads
 
 def main():
-    """Main entry point for lead generation system."""
-    print("=" * 60)
-    print("Lead Generation System - Powered by Apollo.io")
-    print("=" * 60)
-    print()
-
-    # Initialize lead generator
-    try:
-        generator = LeadGenerator()
-    except Exception as e:
-        print(f"Error initializing lead generator: {e}")
-        print("\nMake sure you have:")
-        print("1. Created a .env file with your APOLLO_API_KEY")
-        print("2. Installed dependencies: pip install -r requirements.txt")
+    # Check if ICP description provided
+    if len(sys.argv) < 2:
+        print("Usage: python main.py '<ICP description>'")
+        print("\nExample:")
+        print('python main.py "CTOs and VPs of Engineering at B2B SaaS companies with 50-500 employees in the United States"')
         sys.exit(1)
 
-    # Check API health
-    if not generator.check_api_health():
-        print("\nAPI health check failed. Please verify your API key.")
-        sys.exit(1)
+    icp_description = " ".join(sys.argv[1:])
 
-    print()
-
-    # Generate leads
-    leads = generator.generate_leads(
-        max_results=10  # Start with 10 leads for testing
-    )
-
-    if leads:
-        # Export to file
-        generator.export_leads(leads, "leads.json")
-
-        # Display sample leads
-        print("\n" + "=" * 60)
-        print("Sample Leads (first 3):")
-        print("=" * 60)
-        for i, lead in enumerate(leads[:3], 1):
-            print(f"\nLead {i}:")
-            print(f"  Name: {lead['name']}")
-            print(f"  Title: {lead['title']}")
-            print(f"  Email: {lead['email']}")
-            print(f"  Company: {lead['company']['name']}")
-            print(f"  Industry: {lead['company']['industry']}")
-    else:
-        print("\nNo leads generated.")
-
+    generator = LeadGenerator()
+    generator.generate_leads(icp_description)
 
 if __name__ == "__main__":
     main()

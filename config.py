@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     # Apollo.io API Configuration
     apollo_api_key: str
 
+    # Anthropic API Configuration
+    anthropic_api_key: str
+
     # Search Parameters
     default_person_titles: str = "CEO,CTO,VP Engineering"
     default_company_size: str = "1-10,11-50,51-200"
@@ -40,3 +43,6 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+# Export API keys for direct import
+ANTHROPIC_API_KEY = settings.anthropic_api_key
