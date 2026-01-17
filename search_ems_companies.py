@@ -1,12 +1,13 @@
 #!/usr/bin/env python
-"""Search for EMS (Electronics Manufacturing Services) companies."""
+"""Search for companies based on ICP criteria."""
 import json
 import csv
 import io
+import sys
 from datetime import datetime
 from apollo_connector import ApolloConnector
 
-def filter_by_employee_count(companies, min_emp=50, max_emp=500):
+def filter_by_employee_count(companies, min_emp, max_emp):
     """Filter companies by employee count range."""
     filtered = []
     for company in companies:
@@ -44,44 +45,64 @@ def companies_to_csv_string(companies):
 
     return output.getvalue()
 
-def search_ems_companies():
-    """Search for EMS manufacturing companies with 50-500 employees in US."""
+def search_companies(
+    industries=None,
+    min_employees=50,
+    max_employees=500,
+    locations=None,
+    description="Company Search"
+):
+    """
+    Search for companies based on ICP criteria.
+
+    Args:
+        industries: List of industry keywords
+        min_employees: Minimum employee count
+        max_employees: Maximum employee count
+        locations: List of locations (countries, states, cities)
+        description: Description of the search
+    """
     print("=" * 60)
-    print("🔍 EMS MANUFACTURING COMPANIES SEARCH")
+    print(f"🔍 {description.upper()}")
     print("=" * 60)
     print()
 
     # Initialize Apollo connector
     apollo = ApolloConnector()
 
-    # Define search criteria for EMS companies
+    # Map employee ranges to Apollo's format
+    company_size_ranges = []
+    if min_employees <= 50 and max_employees >= 10:
+        company_size_ranges.append("1-10")
+    if min_employees <= 50 and max_employees >= 50:
+        company_size_ranges.append("11-50")
+    if min_employees <= 200 and max_employees >= 51:
+        company_size_ranges.append("51-200")
+    if min_employees <= 500 and max_employees >= 201:
+        company_size_ranges.append("201-500")
+    if min_employees <= 1000 and max_employees >= 501:
+        company_size_ranges.append("501-1000")
+    if min_employees <= 5000 and max_employees >= 1001:
+        company_size_ranges.append("1001-5000")
+    if max_employees > 5000:
+        company_size_ranges.append("5001+")
+
+    # Define search criteria
     criteria = {
-        "company_size": [
-            "51-200",      # 51-200 employees
-            "201-500"      # 201-500 employees
-        ],
-        "industries": [
-            "Electronics",
-            "Electronics Manufacturing",
-            "Electronic Manufacturing",
-            "EMS",
-            "Contract Manufacturing",
-            "Electrical/Electronic Manufacturing",
-            "Manufacturing",
-            "PCB Assembly",
-            "Circuit Board Manufacturing"
-        ],
-        "locations": [
-            "United States"
-        ]
+        "company_size": company_size_ranges,
+        "industries": industries or ["Manufacturing"],
+        "locations": locations or ["United States"]
     }
 
     print("📋 Search Criteria:")
-    print(json.dumps(criteria, indent=2))
+    print(f"   Industries: {', '.join(criteria['industries'])}")
+    print(f"   Employee Range: {min_employees}-{max_employees}")
+    print(f"   Locations: {', '.join(criteria['locations'])}")
+    print(f"   Apollo Size Ranges: {', '.join(criteria['company_size'])}")
     print()
 
     # Search Apollo for companies
-    print("📊 Searching Apollo.io for EMS companies...")
+    print("📊 Searching Apollo.io...")
     raw_results = apollo.search_organizations(criteria=criteria, per_page=100)
 
     if raw_results.get("error"):
@@ -94,9 +115,9 @@ def search_ems_companies():
     companies = apollo.format_companies(raw_results)
     print(f"✅ Found {len(companies)} companies")
 
-    # Filter by employee count (50-500)
-    filtered_companies = filter_by_employee_count(companies, 50, 500)
-    print(f"✅ Filtered to {len(filtered_companies)} companies (50-500 employees)")
+    # Filter by exact employee count range
+    filtered_companies = filter_by_employee_count(companies, min_employees, max_employees)
+    print(f"✅ Filtered to {len(filtered_companies)} companies ({min_employees}-{max_employees} employees)")
 
     # Get pagination info
     pagination = raw_results.get("pagination", {})
@@ -126,7 +147,7 @@ def search_ems_companies():
 
     print()
     print("=" * 60)
-    print(f"✅ SEARCH COMPLETED - {len(filtered_companies)} companies (50-500 employees)")
+    print(f"✅ SEARCH COMPLETED - {len(filtered_companies)} companies ({min_employees}-{max_employees} employees)")
     print("=" * 60)
     print()
 
@@ -147,9 +168,29 @@ def search_ems_companies():
     else:
         print()
         print("✅ Results not exported to CSV")
-        print(f"📊 Summary: Found {len(filtered_companies)} EMS companies with 50-500 employees")
+        print(f"📊 Summary: Found {len(filtered_companies)} companies with {min_employees}-{max_employees} employees")
 
     return filtered_companies
 
+
 if __name__ == "__main__":
-    search_ems_companies()
+    # Default: EMS manufacturing companies with 50-500 employees in United States
+    ems_industries = [
+        "Electronics",
+        "Electronics Manufacturing",
+        "Electronic Manufacturing",
+        "EMS",
+        "Contract Manufacturing",
+        "Electrical/Electronic Manufacturing",
+        "Manufacturing",
+        "PCB Assembly",
+        "Circuit Board Manufacturing"
+    ]
+
+    search_companies(
+        industries=ems_industries,
+        min_employees=50,
+        max_employees=500,
+        locations=["United States"],
+        description="EMS Manufacturing Companies Search"
+    )
