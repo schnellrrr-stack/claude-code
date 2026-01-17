@@ -1,6 +1,7 @@
 # main.py
 import json
 import sys
+import os
 from datetime import datetime
 from apollo_connector import ApolloConnector
 from anthropic import Anthropic
@@ -9,7 +10,11 @@ from config import ANTHROPIC_API_KEY
 class LeadGenerator:
     def __init__(self):
         self.apollo = ApolloConnector()
-        self.claude = Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Handle automatic API key detection
+        api_key = ANTHROPIC_API_KEY
+        if api_key == "this_is_handled_automatically":
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+        self.claude = Anthropic(api_key=api_key)
 
     def parse_icp_with_claude(self, icp_description):
         """
