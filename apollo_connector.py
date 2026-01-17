@@ -98,8 +98,10 @@ class ApolloConnector:
 
     def search_organizations(
         self,
+        criteria: Optional[Dict[str, Any]] = None,
         company_sizes: Optional[List[str]] = None,
         industries: Optional[List[str]] = None,
+        locations: Optional[List[str]] = None,
         page: int = 1,
         per_page: int = 25
     ) -> Dict[str, Any]:
@@ -107,28 +109,44 @@ class ApolloConnector:
         Search for organizations using Apollo.io API.
 
         Args:
-            company_sizes: List of company size ranges
-            industries: List of industries
+            criteria: Dict with search criteria (new interface)
+            company_sizes: List of company size ranges (legacy)
+            industries: List of industries (legacy)
+            locations: List of locations (legacy)
             page: Page number for pagination
             per_page: Number of results per page (max 100)
 
         Returns:
             API response with organization data
         """
-        endpoint = f"{self.BASE_URL}/mixed_companies/search"
+        endpoint = f"{self.BASE_URL}/organizations/search"
 
-        # Use defaults from config if not provided
-        if company_sizes is None:
-            company_sizes = settings.get_company_sizes_list()
-        if industries is None:
-            industries = settings.get_industries_list()
+        # Handle new criteria-based interface
+        if criteria is not None:
+            company_sizes = criteria.get("company_size", [])
+            industries = criteria.get("industries", [])
+            locations = criteria.get("locations", [])
+        else:
+            # Use defaults from config if not provided (legacy interface)
+            if company_sizes is None:
+                company_sizes = settings.get_company_sizes_list()
+            if industries is None:
+                industries = settings.get_industries_list()
+            if locations is None:
+                locations = []
 
         payload = {
-            "organization_num_employees_ranges": company_sizes,
-            "organization_industry_tag_ids": industries,
             "page": page,
             "per_page": min(per_page, 100)
         }
+
+        # Add optional fields if provided
+        if company_sizes:
+            payload["organization_num_employees_ranges"] = company_sizes
+        if industries:
+            payload["q_organization_keyword_tags"] = industries
+        if locations:
+            payload["organization_locations"] = locations
 
         try:
             response = requests.post(
@@ -237,3 +255,45 @@ class ApolloConnector:
             formatted_leads.append(lead)
 
         return formatted_leads
+
+    def format_companies(self, raw_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Format raw Apollo organization API results into a clean company list.
+
+        Args:
+            raw_results: Raw API response from Apollo
+
+        Returns:
+            List of formatted company dictionaries
+        """
+        if not raw_results or raw_results.get("error"):
+            return []
+
+        organizations = raw_results.get("organizations", [])
+        formatted_companies = []
+
+        for org in organizations:
+            company = {
+                "name": org.get("name", ""),
+                "website": org.get("website_url", ""),
+                "linkedin_url": org.get("linkedin_url", ""),
+                "twitter_url": org.get("twitter_url", ""),
+                "facebook_url": org.get("facebook_url", ""),
+                "phone": org.get("phone", ""),
+                "industry": org.get("industry", ""),
+                "industries": org.get("industries", []),
+                "keywords": org.get("keywords", []),
+                "estimated_num_employees": org.get("estimated_num_employees", ""),
+                "city": org.get("city", ""),
+                "state": org.get("state", ""),
+                "country": org.get("country", ""),
+                "postal_code": org.get("postal_code", ""),
+                "street_address": org.get("street_address", ""),
+                "founded_year": org.get("founded_year", ""),
+                "publicly_traded_symbol": org.get("publicly_traded_symbol", ""),
+                "revenue": org.get("organization_revenue_printed", ""),
+            }
+
+            formatted_companies.append(company)
+
+        return formatted_companies
